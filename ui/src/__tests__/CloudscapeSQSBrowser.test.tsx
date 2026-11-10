@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import createWrapper from '@cloudscape-design/components/test-utils/dom'
 
 vi.mock('@/hooks/useEndpoint', () => ({
   useEndpoint: () => ({
@@ -129,6 +130,91 @@ beforeEach(() => {
 })
 
 describe('CloudscapeSQSBrowser (via registry dispatch)', () => {
+  async function openSendModal() {
+    renderSQS()
+    fireEvent.click(await screen.findByRole('link', { name: 'orders' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Send message' }))
+    const dialog = within(await screen.findByRole('dialog', { name: 'Send message to orders' }))
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Message body' }), { target: { value: 'hello' } })
+    fireEvent.click(dialog.getByText('Message attributes - optional'))
+    return dialog
+  }
+
+  function selectAttributeType(index: number, dataType: 'String' | 'Number' | 'Binary') {
+    const dialog = screen.getByRole('dialog', { name: 'Send message to orders' })
+    const selects = createWrapper(dialog).findAllSelects()
+    const select = selects[index]
+    select.openDropdown()
+    select.selectOptionByValue(dataType)
+  }
+
+  it('sends String, Number and Binary attributes with optional custom types', async () => {
+    const dialog = await openSendModal()
+    for (let i = 1; i <= 3; i++) fireEvent.click(dialog.getByRole('button', { name: 'Add new attribute' }))
+    for (const [index, name, value] of [[1, 'source', 'ui'], [2, 'count', '42'], [3, 'payload', 'AP+A']] as const) {
+      fireEvent.change(dialog.getByRole('textbox', { name: `Attribute ${index} name` }), { target: { value: name } })
+      fireEvent.change(dialog.getByRole('textbox', { name: `Attribute ${index} value` }), { target: { value } })
+    }
+    selectAttributeType(1, 'Number')
+    selectAttributeType(2, 'Binary')
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 2 custom type' }), { target: { value: 'int' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/orders/messages') && init?.method === 'POST')
+      expect(call).toBeTruthy()
+      expect(JSON.parse(call![1]!.body as string)).toEqual({
+        messageBody: 'hello',
+        messageAttributes: {
+          source: { dataType: 'String', stringValue: 'ui' },
+          count: { dataType: 'Number.int', stringValue: '42' },
+          payload: { dataType: 'Binary', binaryValue: 'AP+A' },
+        },
+      })
+    })
+  }, 30_000)
+
+  it('limits attributes to ten and removes incomplete rows before sending', async () => {
+    const dialog = await openSendModal()
+    const add = dialog.getByRole('button', { name: 'Add new attribute' })
+    for (let i = 0; i < 10; i++) fireEvent.click(add)
+    expect(add).toHaveAttribute('aria-disabled', 'true')
+    expect(dialog.getByRole('button', { name: 'Send message' })).toBeDisabled()
+    for (let i = 0; i < 10; i++) fireEvent.click(dialog.getAllByRole('button', { name: 'Remove' })[0])
+    expect(add).not.toHaveAttribute('aria-disabled', 'true')
+    expect(dialog.getByRole('button', { name: 'Send message' })).toBeEnabled()
+    fireEvent.click(dialog.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/orders/messages') && init?.method === 'POST')
+      expect(call).toBeTruthy()
+      expect(JSON.parse(call![1]!.body as string)).toEqual({ messageBody: 'hello' })
+    })
+  }, 30_000)
+
+  it('blocks duplicate or reserved names, invalid numbers and invalid Base64', async () => {
+    const dialog = await openSendModal()
+    const submit = dialog.getByRole('button', { name: 'Send message' })
+    for (let i = 1; i <= 2; i++) {
+      fireEvent.click(dialog.getByRole('button', { name: 'Add new attribute' }))
+      fireEvent.change(dialog.getByRole('textbox', { name: `Attribute ${i} name` }), { target: { value: 'source' } })
+      fireEvent.change(dialog.getByRole('textbox', { name: `Attribute ${i} value` }), { target: { value: 'abc' } })
+    }
+    expect(submit).toBeDisabled()
+    expect(dialog.getByText(/unique/i)).toBeInTheDocument()
+    fireEvent.click(dialog.getAllByRole('button', { name: 'Remove' })[1])
+    expect(submit).toBeEnabled()
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 name' }), { target: { value: 'AWS.reserved' } })
+    expect(submit).toBeDisabled()
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 name' }), { target: { value: 'source' } })
+    selectAttributeType(0, 'Number')
+    expect(submit).toBeDisabled()
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 value' }), { target: { value: '42' } })
+    expect(submit).toBeEnabled()
+    selectAttributeType(0, 'Binary')
+    expect(submit).toBeDisabled()
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 value' }), { target: { value: 'AP+A' } })
+    expect(submit).toBeEnabled()
+  }, 30_000)
+
   it('renders the queue table through CLOUDSCAPE_SERVICE_VIEWS', async () => {
     renderSQS()
     expect(await screen.findByText('orders')).toBeInTheDocument()

@@ -6,6 +6,7 @@ os.environ.setdefault("AWS_ENDPOINT_URL", "http://localhost:4566")
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -136,6 +137,52 @@ class TestGetQueueDetail:
 
 class TestSendMessage:
     @patch("backend.routes.sqs.get_client")
+    def test_send_typed_message_attributes(self, mock_get_client):
+        sqs = mock_get_client.return_value
+        sqs.get_queue_url.return_value = {"QueueUrl": QUEUE_URL}
+        sqs.send_message.return_value = {"MessageId": "typed", "MD5OfMessageBody": "md5"}
+
+        resp = client.post(
+            "/api/sqs/queues/test-queue/messages",
+            json={
+                "messageBody": "typed attributes",
+                "messageAttributes": {
+                    "source": {"dataType": "String.source", "stringValue": "ui"},
+                    "count": {"dataType": "Number.int", "stringValue": "42"},
+                    "payload": {"dataType": "Binary.custom", "binaryValue": "AP+A"},
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        assert sqs.send_message.call_args.kwargs["MessageAttributes"] == {
+            "source": {"DataType": "String.source", "StringValue": "ui"},
+            "count": {"DataType": "Number.int", "StringValue": "42"},
+            "payload": {"DataType": "Binary.custom", "BinaryValue": b"\x00\xff\x80"},
+        }
+
+    @pytest.mark.parametrize("attributes", [
+        {"payload": {"dataType": "Binary", "binaryValue": "not base64!"}},
+        {"payload": {"dataType": "Binary", "stringValue": "wrong field"}},
+        {"payload": {"dataType": "String", "binaryValue": "YQ=="}},
+        {"payload": {"dataType": "String", "stringValue": ""}},
+        {"payload": {"dataType": "Number", "stringValue": "NaN"}},
+        {"payload": {"dataType": "Number", "stringValue": "abc"}},
+        {"payload": {"dataType": "Unknown", "stringValue": "test"}},
+        {"AWS.reserved": {"dataType": "String", "stringValue": "test"}},
+        {"bad..name": {"dataType": "String", "stringValue": "test"}},
+        {f"attr{i}": {"dataType": "String", "stringValue": "test"} for i in range(11)},
+    ])
+    @patch("backend.routes.sqs.get_client")
+    def test_reject_invalid_message_attributes(self, mock_get_client, attributes):
+        resp = client.post(
+            "/api/sqs/queues/test-queue/messages",
+            json={"messageBody": "test", "messageAttributes": attributes},
+        )
+        assert resp.status_code == 422
+        mock_get_client.assert_not_called()
+
+    @patch("backend.routes.sqs.get_client")
     def test_send_basic_message(self, mock_get_client):
         mock_sqs = MagicMock()
         mock_get_client.return_value = mock_sqs
@@ -205,6 +252,27 @@ class TestSendMessage:
 
 
 class TestReceiveMessages:
+    @patch("backend.routes.sqs.get_client")
+    def test_receive_binary_attributes_as_base64(self, mock_get_client):
+        sqs = mock_get_client.return_value
+        sqs.get_queue_url.return_value = {"QueueUrl": QUEUE_URL}
+        sqs.receive_message.return_value = {
+            "Messages": [{
+                "MessageId": "binary",
+                "MessageAttributes": {
+                    "payload": {"DataType": "Binary.custom", "BinaryValue": b"\x00\xff\x80"},
+                    "count": {"DataType": "Number.int", "StringValue": "42"},
+                },
+            }],
+        }
+        resp = client.get("/api/sqs/queues/test-queue/messages")
+        assert resp.status_code == 200
+        assert resp.json()["messages"][0]["messageAttributes"] == {
+            "payload": {"DataType": "Binary.custom", "BinaryValue": "AP+A"},
+            "count": {"DataType": "Number.int", "StringValue": "42"},
+        }
+        assert sqs.receive_message.call_args.kwargs["MessageAttributeNames"] == ["All"]
+
     @patch("backend.routes.sqs.get_client")
     def test_receive_messages(self, mock_get_client):
         mock_sqs = MagicMock()

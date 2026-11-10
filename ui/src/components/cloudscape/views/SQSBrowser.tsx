@@ -51,6 +51,8 @@ import type {
 import { useEndpoint } from '@/hooks/useEndpoint'
 import { useFetch } from '@/hooks/useFetch'
 import { useSQSFavoriteMessages } from '@/hooks/useSQSFavoriteMessages'
+import MessageAttributesEditor from './sqs/MessageAttributesEditor'
+import { getMessageAttributesError, type MessageAttributeRow } from './sqs/message-attributes'
 
 type ModalKind = 'create' | 'send' | 'batch-send' | 'settings' | 'purge' | 'delete'
 
@@ -214,6 +216,7 @@ function SendMessageModal({ queue, onClose, onDone }: { queue: SQSQueue; onClose
   const [delay, setDelay] = useState('0')
   const [groupId, setGroupId] = useState('')
   const [dedupId, setDedupId] = useState('')
+  const [messageAttributes, setMessageAttributes] = useState<MessageAttributeRow[]>([])
   const [sending, setSending] = useState(false)
   const isFifo = queue.type === 'FIFO'
 
@@ -227,6 +230,13 @@ function SendMessageModal({ queue, onClose, onDone }: { queue: SQSQueue; onClose
           delaySeconds: Number(delay) || undefined,
           messageGroupId: isFifo ? groupId : undefined,
           messageDeduplicationId: isFifo && dedupId ? dedupId : undefined,
+          messageAttributes: messageAttributes.length ? Object.fromEntries(messageAttributes.map((attr) => [
+            attr.name,
+            {
+              dataType: attr.dataType + (attr.customType ? `.${attr.customType}` : ''),
+              ...(attr.dataType === 'Binary' ? { binaryValue: attr.value } : { stringValue: attr.value }),
+            },
+          ])) : undefined,
         },
         activeEndpoint,
       )
@@ -240,14 +250,15 @@ function SendMessageModal({ queue, onClose, onDone }: { queue: SQSQueue; onClose
   }
 
   return (
-    <Modal visible onDismiss={onClose} header={`Send message to ${queue.name}`} size="medium">
+    <Modal visible onDismiss={onClose} header={`Send message to ${queue.name}`} size="large">
       <Form
         actions={
           <SpaceBetween direction="horizontal" size="xs">
             <Button variant="link" onClick={onClose} disabled={sending}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={submit} loading={sending} disabled={!body.trim() || (isFifo && !groupId.trim())}>
+            <Button variant="primary" onClick={submit} loading={sending}
+              disabled={!body.trim() || (isFifo && !groupId.trim()) || Boolean(getMessageAttributesError(messageAttributes))}>
               Send message
             </Button>
           </SpaceBetween>
@@ -272,6 +283,9 @@ function SendMessageModal({ queue, onClose, onDone }: { queue: SQSQueue; onClose
               </FormField>
             </>
           )}
+          <ExpandableSection headerText="Message attributes - optional">
+            <MessageAttributesEditor attributes={messageAttributes} onChange={setMessageAttributes} disabled={sending} />
+          </ExpandableSection>
         </SpaceBetween>
       </Form>
     </Modal>
