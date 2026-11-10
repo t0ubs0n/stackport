@@ -1,5 +1,6 @@
 """SQS service-specific routes."""
 
+import base64
 import json
 from typing import Any
 from urllib.parse import unquote
@@ -288,10 +289,12 @@ def send_message(queue_name: str, body: SendMessageRequest, ep: EndpointInfo = D
         if body.message_attributes:
             attrs = {}
             for key, value in body.message_attributes.items():
-                attrs[key] = {
-                    "StringValue": str(value.get("stringValue", "")),
-                    "DataType": value.get("dataType", "String"),
-                }
+                attr: dict[str, Any] = {"DataType": value.data_type}
+                if value.binary_value is not None:
+                    attr["BinaryValue"] = base64.b64decode(value.binary_value, validate=True)
+                else:
+                    attr["StringValue"] = value.string_value
+                attrs[key] = attr
             send_kwargs["MessageAttributes"] = attrs
 
         if body.message_deduplication_id:
@@ -351,7 +354,14 @@ def receive_messages(
                     "body": msg.get("Body"),
                     "md5OfBody": msg.get("MD5OfBody"),
                     "attributes": msg.get("Attributes", {}),
-                    "messageAttributes": msg.get("MessageAttributes", {}),
+                    "messageAttributes": {
+                        name: {
+                            **attribute,
+                            **({"BinaryValue": base64.b64encode(attribute["BinaryValue"]).decode("ascii")}
+                               if "BinaryValue" in attribute else {}),
+                        }
+                        for name, attribute in msg.get("MessageAttributes", {}).items()
+                    },
                 }
             )
 

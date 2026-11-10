@@ -369,7 +369,8 @@ export interface SQSSendMessageRequest {
   messageBody: string
   delaySeconds?: number
   messageAttributes?: Record<string, {
-    stringValue: string
+    stringValue?: string
+    binaryValue?: string
     dataType: string
   }>
   messageDeduplicationId?: string
