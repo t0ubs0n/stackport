@@ -51,8 +51,8 @@ import type {
 import { useEndpoint } from '@/hooks/useEndpoint'
 import { useFetch } from '@/hooks/useFetch'
 import { useSQSFavoriteMessages } from '@/hooks/useSQSFavoriteMessages'
-import MessageAttributesEditor, { getMessageAttributesError } from './sqs/MessageAttributesEditor'
-import type { MessageAttributeRow } from './sqs/MessageAttributesEditor'
+import MessageAttributesEditor from './sqs/MessageAttributesEditor'
+import { getMessageAttributesError, type MessageAttributeRow } from './sqs/message-attributes'
 
 type ModalKind = 'create' | 'send' | 'batch-send' | 'settings' | 'purge' | 'delete'
 

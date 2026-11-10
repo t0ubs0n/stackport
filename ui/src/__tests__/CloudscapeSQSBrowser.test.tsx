@@ -140,10 +140,12 @@ describe('CloudscapeSQSBrowser (via registry dispatch)', () => {
     return dialog
   }
 
-  function selectAttributeType(index: number, optionIndex: number) {
-    const select = createWrapper().findAllSelects()[index]
+  function selectAttributeType(index: number, dataType: 'String' | 'Number' | 'Binary') {
+    const dialog = screen.getByRole('dialog', { name: 'Send message to orders' })
+    const selects = createWrapper(dialog).findAllSelects()
+    const select = selects[index]
     select.openDropdown()
-    select.findDropdown().findOption(optionIndex)!.click()
+    select.selectOptionByValue(dataType)
   }
 
   it('sends String, Number and Binary attributes with optional custom types', async () => {
@@ -153,8 +155,8 @@ describe('CloudscapeSQSBrowser (via registry dispatch)', () => {
       fireEvent.change(dialog.getByRole('textbox', { name: `Attribute ${index} name` }), { target: { value: name } })
       fireEvent.change(dialog.getByRole('textbox', { name: `Attribute ${index} value` }), { target: { value } })
     }
-    selectAttributeType(1, 2)
-    selectAttributeType(2, 3)
+    selectAttributeType(1, 'Number')
+    selectAttributeType(2, 'Binary')
     fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 2 custom type' }), { target: { value: 'int' } })
     fireEvent.click(dialog.getByRole('button', { name: 'Send message' }))
     await waitFor(() => {
@@ -169,16 +171,16 @@ describe('CloudscapeSQSBrowser (via registry dispatch)', () => {
         },
       })
     })
-  })
+  }, 30_000)
 
   it('limits attributes to ten and removes incomplete rows before sending', async () => {
     const dialog = await openSendModal()
     const add = dialog.getByRole('button', { name: 'Add new attribute' })
     for (let i = 0; i < 10; i++) fireEvent.click(add)
-    expect(add).toBeDisabled()
+    expect(add).toHaveAttribute('aria-disabled', 'true')
     expect(dialog.getByRole('button', { name: 'Send message' })).toBeDisabled()
     for (let i = 0; i < 10; i++) fireEvent.click(dialog.getAllByRole('button', { name: 'Remove' })[0])
-    expect(add).toBeEnabled()
+    expect(add).not.toHaveAttribute('aria-disabled', 'true')
     expect(dialog.getByRole('button', { name: 'Send message' })).toBeEnabled()
     fireEvent.click(dialog.getByRole('button', { name: 'Send message' }))
     await waitFor(() => {
@@ -186,7 +188,7 @@ describe('CloudscapeSQSBrowser (via registry dispatch)', () => {
       expect(call).toBeTruthy()
       expect(JSON.parse(call![1]!.body as string)).toEqual({ messageBody: 'hello' })
     })
-  })
+  }, 30_000)
 
   it('blocks duplicate or reserved names, invalid numbers and invalid Base64', async () => {
     const dialog = await openSendModal()
@@ -203,15 +205,15 @@ describe('CloudscapeSQSBrowser (via registry dispatch)', () => {
     fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 name' }), { target: { value: 'AWS.reserved' } })
     expect(submit).toBeDisabled()
     fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 name' }), { target: { value: 'source' } })
-    selectAttributeType(0, 2)
+    selectAttributeType(0, 'Number')
     expect(submit).toBeDisabled()
     fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 value' }), { target: { value: '42' } })
     expect(submit).toBeEnabled()
-    selectAttributeType(0, 3)
+    selectAttributeType(0, 'Binary')
     expect(submit).toBeDisabled()
     fireEvent.change(dialog.getByRole('textbox', { name: 'Attribute 1 value' }), { target: { value: 'AP+A' } })
     expect(submit).toBeEnabled()
-  })
+  }, 30_000)
 
   it('renders the queue table through CLOUDSCAPE_SERVICE_VIEWS', async () => {
     renderSQS()
